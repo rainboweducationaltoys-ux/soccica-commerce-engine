@@ -1,0 +1,8 @@
+playwright
+pandas
+beautifulsoup4
+lxml
+requests
+openpyxl
+python-dotenv
+tqdm

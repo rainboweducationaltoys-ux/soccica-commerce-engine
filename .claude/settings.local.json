@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m py_compile src/publish_final_products.py src/run_pipeline.py)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -m py_compile src/run_pipeline.py)",
+      "Bash(python3 -m py_compile src/run_pipeline.py src/publish_final_products.py)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(DRY_RUN=true .venv/bin/python -c ' *)",
+      "Bash(DRY_RUN=true PYTHONPATH=src .venv/bin/python -c ' *)",
+      "Bash(sqlite3 /Users/kamil/Desktop/soccica-amazon-importer/data/soccica.db \"SELECT COUNT\\(*\\) FROM products WHERE asin='TESTASIN1';\")",
+      "Bash(DRY_RUN=false PYTHONPATH=src .venv/bin/python -c ' *)",
+      "Bash(git --version)"
+    ]
+  }
+}

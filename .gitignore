@@ -1,0 +1,10 @@
+.env
+data/
+logs/
+output/
+__pycache__/
+*.pyc
+.DS_Store
+*.zip
+src/__pycache__/
+src/src/__pycache__/
