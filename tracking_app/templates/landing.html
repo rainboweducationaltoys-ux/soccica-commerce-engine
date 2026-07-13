@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Soccica Trading LLC — Sipariş Takip</title>
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            margin: 0;
+            color: #222;
+        }
+
+        a { text-decoration: none; color: inherit; }
+
+        /* --- Nav --- */
+        .nav {
+            background: #FBF4EA;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 18px 32px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .wordmark {
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: 0.01em;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 24px;
+            font-size: 0.95rem;
+        }
+
+        .nav-links a:hover { opacity: 0.7; }
+
+        /* --- Hero --- */
+        .hero {
+            position: relative;
+            background: linear-gradient(135deg, #6E5EF0 0%, #4C3FCB 100%);
+            padding: 64px 32px 110px;
+            overflow: hidden;
+        }
+
+        .hero-decoration {
+            position: absolute;
+            top: -30px;
+            right: -30px;
+            width: 260px;
+            height: 260px;
+            color: rgba(255, 255, 255, 0.12);
+            transform: rotate(18deg);
+        }
+
+        .hero-decoration svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .hero-content {
+            max-width: 640px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .eyebrow {
+            color: #FFC94D;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 0.8rem;
+            font-weight: 700;
+            margin: 0 0 12px;
+        }
+
+        .hero h1 {
+            color: #fff;
+            font-size: 2rem;
+            line-height: 1.25;
+            margin: 0 0 16px;
+        }
+
+        .hero h1 .accent { color: #FFC94D; }
+
+        .hero .subtext {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 1.05rem;
+            margin: 0;
+            max-width: 480px;
+        }
+
+        /* --- Search box --- */
+        .track-box {
+            position: relative;
+            z-index: 1;
+            margin-top: 40px;
+            background: #fff;
+            border-radius: 14px;
+            padding: 10px;
+            display: flex;
+            gap: 8px;
+            max-width: 420px;
+            box-shadow: 0 12px 30px rgba(27, 24, 54, 0.25);
+        }
+
+        .track-box input {
+            flex: 1;
+            border: none;
+            outline: none;
+            padding: 10px 12px;
+            font-size: 0.95rem;
+            border-radius: 8px;
+            min-width: 0;
+        }
+
+        .track-box button {
+            background: #4C3FCB;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .track-box button:hover { background: #3d31a8; }
+
+        /* --- Stats bar --- */
+        .stats-bar {
+            background: #1B1836;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            padding: 40px 32px;
+        }
+
+        .stat h3 {
+            color: #fff;
+            font-size: 1.05rem;
+            margin: 0 0 6px;
+        }
+
+        .stat p {
+            color: rgba(255, 255, 255, 0.65);
+            font-size: 0.9rem;
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        @media (max-width: 720px) {
+            .stats-bar { grid-template-columns: repeat(2, 1fr); }
+            .hero h1 { font-size: 1.6rem; }
+            .track-box { max-width: 100%; }
+        }
+
+        @media (max-width: 480px) {
+            .stats-bar { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <div class="wordmark">Soccica Trading LLC</div>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="#track-box">Track order</a>
+            <a href="#">Contact</a>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-decoration" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                <path d="M12 3l9 5v8l-9 5-9-5V8l9-5z" />
+                <path d="M3 8l9 5 9-5" />
+                <path d="M12 13v8" />
+            </svg>
+        </div>
+
+        <div class="hero-content">
+            <p class="eyebrow">Kargonuz yolda</p>
+            <h1>Paketiniz nerede,<br>her an <span class="accent">öğrenin.</span></h1>
+            <p class="subtext">Siparişinizin şu an nerede olduğunu SOC takip kodunuzla anında görün.</p>
+        </div>
+
+        <form class="track-box" id="track-box" onsubmit="return goToTracking(event)">
+            <input type="text" id="soc-code-input" name="code" placeholder="Takip kodunuzu girin (SOC...)" required>
+            <button type="submit">Takip et</button>
+        </form>
+    </section>
+
+    <section class="stats-bar">
+        <div class="stat">
+            <h3>Sipariş onaylandı</h3>
+            <p>Siparişiniz alındı ve işleme kondu.</p>
+        </div>
+        <div class="stat">
+            <h3>Uluslararası transit</h3>
+            <p>Paketiniz size doğru yola çıktı.</p>
+        </div>
+        <div class="stat">
+            <h3>Dubai'ye ulaştı</h3>
+            <p>BAE gümrüğünden geçti.</p>
+        </div>
+        <div class="stat">
+            <h3>Teslim edildi</h3>
+            <p>Kapınıza kadar ulaştı.</p>
+        </div>
+    </section>
+
+    <script>
+        function goToTracking(event) {
+            event.preventDefault();
+            var code = document.getElementById("soc-code-input").value.trim();
+            if (code) {
+                window.location.href = "/track/" + encodeURIComponent(code);
+            }
+            return false;
+        }
+    </script>
+</body>
+</html>

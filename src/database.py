@@ -21,6 +21,9 @@ def get_connection() -> sqlite3.Connection:
     connection = sqlite3.connect(DATABASE_FILE)
     connection.row_factory = sqlite3.Row
 
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=5000")
+
     return connection
 
 
@@ -69,6 +72,31 @@ def initialize_database() -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS shopify_collections (
+                tag TEXT PRIMARY KEY,
+                shopify_collection_id TEXT NOT NULL,
+                shopify_collection_handle TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spotlight_offers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asin TEXT NOT NULL,
+                amazon_price_aed REAL NOT NULL,
+                amazon_shipping_aed REAL,
+                is_selected INTEGER NOT NULL DEFAULT 0,
+                scan_date TEXT NOT NULL,
+                source_file TEXT
+            )
+            """
+        )
+
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_products_status
             ON products(status)
             """
@@ -78,6 +106,13 @@ def initialize_database() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_offers_asin
             ON marketplace_offers(asin)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_spotlight_offers_asin
+            ON spotlight_offers(asin)
             """
         )
 
@@ -155,6 +190,27 @@ def get_next_pending_asins(
             FROM products
             WHERE status IN ('pending', 'retry')
             ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [
+        str(row["asin"])
+        for row in rows
+    ]
+
+
+def get_spotlight_priced_asins(
+    limit: int = 100,
+) -> list[str]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT asin
+            FROM products
+            WHERE status = 'spotlight_priced'
+            ORDER BY updated_at ASC
             LIMIT ?
             """,
             (limit,),
@@ -325,6 +381,7 @@ def get_status_summary() -> dict[str, int]:
         "total": 0,
         "pending": 0,
         "processing": 0,
+        "spotlight_priced": 0,
         "ready_for_shopify": 0,
         "published": 0,
         "skipped": 0,

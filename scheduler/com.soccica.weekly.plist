@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.soccica.weekly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/kamil/Desktop/soccica-amazon-importer/run.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kamil/Desktop/soccica-amazon-importer</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kamil/Desktop/soccica-amazon-importer/logs/scheduler_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/kamil/Desktop/soccica-amazon-importer/logs/scheduler_stderr.log</string>
+</dict>
+</plist>

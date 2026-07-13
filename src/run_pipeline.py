@@ -1,6 +1,8 @@
 import json
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -18,16 +20,20 @@ from database import (
     save_marketplace_offer,
     update_product_status,
 )
+from logging_setup import configure_logging
 from marketplace_scraper import MARKETPLACES
 from pricing_engine import calculate_selling_price
 from product_engine import scrape_complete_offer
 from product_store import (
+    get_product_by_asin,
     migrate_product_table,
     save_scraped_product,
 )
 
 
 load_dotenv()
+
+logger = configure_logging("soccica.pipeline")
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -80,6 +86,20 @@ EXPORT_CSV = (
 DRY_RUN = (
     os.getenv("DRY_RUN", "false").lower() == "true"
 )
+
+RETRY_MAX_ATTEMPTS = int(
+    os.getenv("RETRY_MAX_ATTEMPTS", "3")
+)
+
+PARALLEL_WORKERS = int(
+    os.getenv("PARALLEL_WORKERS", "3")
+)
+
+TRANSIENT_OFFER_STATUSES = {
+    "captcha",
+    "page_error",
+    "error",
+}
 
 
 def safe_text(value: Any) -> str:
@@ -215,8 +235,44 @@ def build_final_product(
     return result
 
 
+def split_into_chunks(
+    items: list[str],
+    chunk_count: int,
+) -> list[list[str]]:
+    if not items:
+        return []
+
+    chunk_count = max(
+        1,
+        min(chunk_count, len(items)),
+    )
+
+    base_size, remainder = divmod(
+        len(items),
+        chunk_count,
+    )
+
+    chunks: list[list[str]] = []
+    start = 0
+
+    for index in range(chunk_count):
+        size = base_size + (
+            1 if index < remainder else 0
+        )
+
+        chunks.append(
+            items[start:start + size]
+        )
+
+        start += size
+
+    return chunks
+
+
 def print_status_summary() -> None:
     summary = get_status_summary()
+
+    logger.info("DB durumu: %s", summary)
 
     print("\n" + "-" * 70)
     print("VERİTABANI DURUMU")
@@ -239,6 +295,7 @@ def print_status_summary() -> None:
 def process_asin(
     page,
     asin: str,
+    attempts_before: int,
 ) -> dict[str, Any] | None:
     update_product_status(
         asin=asin,
@@ -291,6 +348,8 @@ def process_asin(
                 "error": error_text,
             }
 
+            asin_offers.append(failed_offer)
+
             save_marketplace_offer(
                 failed_offer
             )
@@ -309,6 +368,14 @@ def process_asin(
                 error_text,
             )
 
+            logger.error(
+                "%s %s hata: %s",
+                asin,
+                marketplace.code,
+                error_text,
+                exc_info=True,
+            )
+
         time.sleep(PAGE_WAIT_SECONDS)
 
     best_offer = select_best_offer(
@@ -316,14 +383,63 @@ def process_asin(
     )
 
     if best_offer is None:
-        update_product_status(
-            asin=asin,
-            status="error",
-            error=(
-                "Dubai'ye gönderilebilen ve tam maliyeti "
-                "hesaplanabilen teklif bulunamadı."
-            ),
-        )
+        transient_marketplaces = [
+            offer.get("marketplace", "")
+            for offer in asin_offers
+            if offer.get("status") in TRANSIENT_OFFER_STATUSES
+        ]
+
+        if transient_marketplaces:
+            if attempts_before < RETRY_MAX_ATTEMPTS:
+                update_product_status(
+                    asin=asin,
+                    status="retry",
+                    error=(
+                        "Geçici hata (CAPTCHA/sayfa/ağ hatası): "
+                        + ", ".join(transient_marketplaces)
+                    ),
+                )
+
+                logger.warning(
+                    "%s: geçici hata (%s), retry olarak "
+                    "işaretlendi (deneme %d/%d).",
+                    asin,
+                    ", ".join(transient_marketplaces),
+                    attempts_before + 1,
+                    RETRY_MAX_ATTEMPTS,
+                )
+            else:
+                permanent_error = (
+                    "CAPTCHA/page hatası nedeniyle "
+                    f"{RETRY_MAX_ATTEMPTS} denemede başarısız, "
+                    "kalıcı hata olarak işaretlendi."
+                )
+
+                update_product_status(
+                    asin=asin,
+                    status="error",
+                    error=permanent_error,
+                )
+
+                logger.warning(
+                    "%s: %s",
+                    asin,
+                    permanent_error,
+                )
+        else:
+            update_product_status(
+                asin=asin,
+                status="error",
+                error=(
+                    "Dubai'ye gönderilebilen ve tam maliyeti "
+                    "hesaplanabilen teklif bulunamadı."
+                ),
+            )
+
+            logger.warning(
+                "%s: uygun teklif bulunamadı.",
+                asin,
+            )
 
         return None
 
@@ -349,7 +465,162 @@ def process_asin(
             final_product,
         )
 
+    logger.info(
+        "%s: marketplace=%s landed_cost_aed=%s shopify_price_aed=%s",
+        asin,
+        final_product.get("marketplace", ""),
+        final_product.get("landed_cost_aed", 0),
+        final_product.get("shopify_price_aed", 0),
+    )
+
     return final_product
+
+
+def run_worker(
+    worker_id: int,
+    asins: list[str],
+    stop_event: threading.Event,
+) -> tuple[int, int]:
+    prefix = f"[Worker {worker_id}]"
+
+    success_count = 0
+    error_count = 0
+
+    with sync_playwright() as playwright:
+        browser = create_browser(playwright)
+        context = create_context(browser)
+        page = context.new_page()
+
+        try:
+            for index, asin in enumerate(
+                asins,
+                start=1,
+            ):
+                if stop_event.is_set():
+                    remaining = len(asins) - index + 1
+
+                    print(
+                        f"{prefix} durduruldu, kalan "
+                        f"{remaining} ASIN atlanıyor."
+                    )
+
+                    logger.info(
+                        "%s durduruldu, kalan %d ASIN atlanıyor.",
+                        prefix,
+                        remaining,
+                    )
+
+                    break
+
+                print(
+                    f"\n{'=' * 70}\n"
+                    f"{prefix} ASIN {index}/{len(asins)}: {asin}\n"
+                    f"{'=' * 70}"
+                )
+
+                current_product = get_product_by_asin(
+                    asin
+                )
+
+                attempts_before = (
+                    current_product.get(
+                        "attempt_count", 0
+                    )
+                    if current_product
+                    else 0
+                )
+
+                try:
+                    final_product = process_asin(
+                        page=page,
+                        asin=asin,
+                        attempts_before=attempts_before,
+                    )
+
+                    if final_product is None:
+                        error_count += 1
+
+                        print(
+                            f"{prefix} Uygun teklif bulunamadı."
+                        )
+
+                        continue
+
+                    success_count += 1
+
+                    print(
+                        f"{prefix} Seçilen marketplace: "
+                        f"{final_product.get('marketplace', '')} | "
+                        "Landed cost: "
+                        f"{final_product.get('landed_cost_aed', 0)} | "
+                        "Shopify fiyatı: "
+                        f"{final_product.get('shopify_price_aed', 0)}"
+                    )
+
+                except Exception as error:
+                    error_text = str(error)
+
+                    if attempts_before < RETRY_MAX_ATTEMPTS:
+                        update_product_status(
+                            asin=asin,
+                            status="retry",
+                            error=error_text,
+                        )
+                    else:
+                        permanent_error = (
+                            f"{RETRY_MAX_ATTEMPTS} denemede "
+                            f"başarısız (son hata: {error_text}), "
+                            "kalıcı hata olarak işaretlendi."
+                        )
+
+                        update_product_status(
+                            asin=asin,
+                            status="error",
+                            error=permanent_error,
+                        )
+
+                        logger.warning(
+                            "%s %s: %s",
+                            prefix,
+                            asin,
+                            permanent_error,
+                        )
+
+                    append_csv_row(
+                        ERROR_FILE,
+                        {
+                            "asin": asin,
+                            "marketplace": "",
+                            "error": error_text,
+                        },
+                    )
+
+                    error_count += 1
+
+                    print(
+                        f"{prefix} ASIN işleme hatası: {error_text}"
+                    )
+
+                    logger.error(
+                        "%s %s işleme hatası: %s",
+                        prefix,
+                        asin,
+                        error_text,
+                        exc_info=True,
+                    )
+
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+    return success_count, error_count
 
 
 def main() -> None:
@@ -405,6 +676,13 @@ def main() -> None:
         BATCH_SIZE,
     )
 
+    logger.info(
+        "Pipeline başlıyor. asin_sayisi=%d yeni_eklenen=%d batch_size=%d",
+        len(file_asins),
+        inserted_count,
+        BATCH_SIZE,
+    )
+
     print_status_summary()
 
     pending_asins = get_next_pending_asins(
@@ -417,122 +695,116 @@ def main() -> None:
         )
         return
 
+    chunks = split_into_chunks(
+        pending_asins,
+        PARALLEL_WORKERS,
+    )
+
+    print(
+        f"\nParalel worker sayısı: {len(chunks)} "
+        f"(PARALLEL_WORKERS={PARALLEL_WORKERS})"
+    )
+
+    for worker_id, chunk in enumerate(
+        chunks,
+        start=1,
+    ):
+        print(f"  Worker {worker_id}: {len(chunk)} ASIN")
+
+    logger.info(
+        "Paralel worker dağılımı: %s",
+        [len(chunk) for chunk in chunks],
+    )
+
     success_count = 0
     error_count = 0
+    stop_event = threading.Event()
+    interrupted = False
+    reported: set[Any] = set()
 
-    with sync_playwright() as playwright:
-        browser = create_browser(playwright)
-        context = create_context(browser)
-        page = context.new_page()
+    with ThreadPoolExecutor(
+        max_workers=len(chunks)
+    ) as executor:
+        futures = {
+            executor.submit(
+                run_worker,
+                worker_id,
+                chunk,
+                stop_event,
+            ): worker_id
+            for worker_id, chunk in enumerate(
+                chunks,
+                start=1,
+            )
+        }
+
+        def collect(future) -> None:
+            nonlocal success_count, error_count
+
+            if future in reported:
+                return
+
+            reported.add(future)
+
+            try:
+                worker_success, worker_error = (
+                    future.result()
+                )
+            except Exception as error:
+                worker_success, worker_error = 0, 0
+
+                logger.error(
+                    "[Worker %d] beklenmeyen hata: %s",
+                    futures[future],
+                    error,
+                    exc_info=True,
+                )
+
+            success_count += worker_success
+            error_count += worker_error
+
+            print(
+                f"[Worker {futures[future]}] tamamlandı. "
+                f"Başarılı={worker_success} "
+                f"Hatalı={worker_error}"
+            )
 
         try:
-            for index, asin in enumerate(
-                pending_asins,
-                start=1,
-            ):
-                print("\n" + "=" * 70)
-                print(
-                    f"ASIN {index}/{len(pending_asins)}: "
-                    f"{asin}"
-                )
-                print("=" * 70)
+            for future in as_completed(futures):
+                collect(future)
 
-                try:
-                    final_product = process_asin(
-                        page=page,
-                        asin=asin,
-                    )
+        except KeyboardInterrupt:
+            interrupted = True
 
-                    if final_product is None:
-                        error_count += 1
-                        print(
-                            "Uygun teklif bulunamadı."
-                        )
-                        continue
+            print(
+                "\nİşlem kullanıcı tarafından durduruldu. "
+                "Çalışan worker'ların bitirmesi bekleniyor..."
+            )
 
-                    success_count += 1
+            logger.info(
+                "İşlem kullanıcı tarafından durduruldu, "
+                "worker'lar bekleniyor."
+            )
 
-                    print(
-                        "Seçilen marketplace:",
-                        final_product.get(
-                            "marketplace",
-                            "",
-                        ),
-                    )
+            stop_event.set()
 
-                    print(
-                        "Landed cost:",
-                        final_product.get(
-                            "landed_cost_aed",
-                            0,
-                        ),
-                    )
+            for future in futures:
+                collect(future)
 
-                    print(
-                        "Shopify fiyatı:",
-                        final_product.get(
-                            "shopify_price_aed",
-                            0,
-                        ),
-                    )
-
-                except KeyboardInterrupt:
-                    print(
-                        "\nİşlem kullanıcı tarafından durduruldu."
-                    )
-
-                    update_product_status(
-                        asin=asin,
-                        status="retry",
-                        error=(
-                            "İşlem kullanıcı tarafından "
-                            "durduruldu."
-                        ),
-                    )
-
-                    raise
-
-                except Exception as error:
-                    error_text = str(error)
-
-                    update_product_status(
-                        asin=asin,
-                        status="retry",
-                        error=error_text,
-                    )
-
-                    append_csv_row(
-                        ERROR_FILE,
-                        {
-                            "asin": asin,
-                            "marketplace": "",
-                            "error": error_text,
-                        },
-                    )
-
-                    error_count += 1
-
-                    print(
-                        "ASIN işleme hatası:",
-                        error_text,
-                    )
-
-        finally:
-            try:
-                context.close()
-            except Exception:
-                pass
-
-            try:
-                browser.close()
-            except Exception:
-                pass
+    if interrupted:
+        raise KeyboardInterrupt()
 
     print("\n" + "=" * 70)
     print("PARTİ TAMAMLANDI")
     print("=" * 70)
     print("Başarılı:", success_count)
     print("Hatalı:", error_count)
+
+    logger.info(
+        "Parti tamamlandı. basarili=%d hatali=%d",
+        success_count,
+        error_count,
+    )
 
     print_status_summary()
 

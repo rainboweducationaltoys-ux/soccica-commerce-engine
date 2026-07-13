@@ -9,9 +9,12 @@ from database import (
     get_status_summary,
     initialize_database,
 )
+from logging_setup import configure_logging
 
 
 load_dotenv()
+
+logger = configure_logging("soccica.run_all")
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,6 +24,8 @@ PYTHON = BASE_DIR / ".venv" / "bin" / "python"
 
 def print_summary(title: str) -> None:
     summary = get_status_summary()
+
+    logger.info("%s: %s", title, summary)
 
     print("\n" + "=" * 70)
     print(title)
@@ -99,6 +104,8 @@ def main() -> None:
 
     initialize_database()
 
+    logger.info("run_all başlıyor.")
+
     print_summary("BAŞLANGIÇ DURUMU")
 
     run_script(
@@ -142,6 +149,8 @@ def main() -> None:
             "Bu çalışma için Shopify yayınlama kuyruğu tamamlandı."
         )
 
+    logger.info("run_all tamamlandı.")
+
 
 if __name__ == "__main__":
     try:
@@ -155,4 +164,11 @@ if __name__ == "__main__":
 
     except Exception as error:
         print(f"\nHATA: {error}")
+
+        logger.error(
+            "run_all hatası: %s",
+            error,
+            exc_info=True,
+        )
+
         sys.exit(1)

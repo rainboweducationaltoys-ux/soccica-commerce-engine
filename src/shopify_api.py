@@ -5,6 +5,8 @@ from typing import Any
 import requests
 from dotenv import load_dotenv
 
+from database import get_connection, utc_now
+
 
 load_dotenv()
 
@@ -594,6 +596,50 @@ def find_product_by_asin(
         return None
 
     return products[0]
+
+
+def get_product_with_details(
+    product_id: str,
+    namespace: str = "soccica",
+) -> dict[str, Any] | None:
+    query = """
+    query GetProductWithDetails(
+      $id: ID!
+      $namespace: String!
+    ) {
+      product(id: $id) {
+        id
+        title
+        handle
+        status
+        variants(first: 10) {
+          nodes {
+            id
+            sku
+          }
+        }
+        metafields(namespace: $namespace, first: 20) {
+          nodes {
+            namespace
+            key
+            value
+          }
+        }
+      }
+    }
+    """
+
+    payload = graphql_request(
+        query=query,
+        variables={
+            "id": product_id,
+            "namespace": namespace,
+        },
+    )
+
+    return payload.get("data", {}).get("product")
+
+
 def set_product_metafields(
     metafields: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
@@ -651,3 +697,210 @@ def set_product_metafields(
         "metafields",
         [],
     )
+
+
+def _get_cached_collection(
+    tag: str,
+) -> dict[str, str] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                shopify_collection_id,
+                shopify_collection_handle
+            FROM shopify_collections
+            WHERE tag = ?
+            """,
+            (tag,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row["shopify_collection_id"],
+        "handle": row["shopify_collection_handle"] or "",
+    }
+
+
+def _save_collection_cache(
+    tag: str,
+    collection_id: str,
+    handle: str,
+) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO shopify_collections (
+                tag,
+                shopify_collection_id,
+                shopify_collection_handle,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(tag) DO UPDATE SET
+                shopify_collection_id = excluded.shopify_collection_id,
+                shopify_collection_handle = excluded.shopify_collection_handle
+            """,
+            (
+                tag,
+                collection_id,
+                handle,
+                utc_now(),
+            ),
+        )
+
+
+def find_collection_by_title(
+    title: str,
+) -> dict[str, str] | None:
+    query = """
+    query FindCollectionByTitle($query: String!) {
+      collections(first: 5, query: $query) {
+        nodes {
+          id
+          title
+          handle
+        }
+      }
+    }
+    """
+
+    escaped_title = title.replace(
+        "'",
+        "\\'",
+    )
+
+    payload = graphql_request(
+        query=query,
+        variables={
+            "query": f"title:'{escaped_title}'",
+        },
+    )
+
+    collections = (
+        payload
+        .get("data", {})
+        .get("collections", {})
+        .get("nodes", [])
+    )
+
+    for collection in collections:
+        if collection.get("title") == title:
+            return collection
+
+    return None
+
+
+def create_automated_collection(
+    title: str,
+) -> dict[str, str]:
+    mutation = """
+    mutation CollectionCreate(
+      $collection: CollectionCreateInput!
+    ) {
+      collectionCreate(collection: $collection) {
+        collection {
+          id
+          title
+          handle
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    variables = {
+        "collection": {
+            "title": title,
+            "sources": [
+                {
+                    "source": {
+                        "title": title,
+                        "targetType": "PRODUCTS",
+                        "inclusion": {
+                            "matchType": "ALL",
+                            "conditions": [
+                                {
+                                    "productTag": {
+                                        "relation": "TAGGED_WITH",
+                                        "values": [title],
+                                        "matchType": "ALL",
+                                    }
+                                }
+                            ],
+                        },
+                    }
+                }
+            ],
+        }
+    }
+
+    payload = graphql_request(
+        query=mutation,
+        variables=variables,
+    )
+
+    result = payload["data"]["collectionCreate"]
+    user_errors = result.get("userErrors", [])
+
+    if user_errors:
+        messages = get_user_error_messages(
+            user_errors
+        )
+
+        raise RuntimeError(
+            "Shopify koleksiyon oluşturma hatası: "
+            + " | ".join(messages)
+        )
+
+    collection = result.get("collection")
+
+    if not collection:
+        raise RuntimeError(
+            "Shopify koleksiyon bilgisi dönmedi."
+        )
+
+    return collection
+
+
+def get_or_create_automated_collection(
+    tag: str,
+) -> dict[str, str]:
+    cached = _get_cached_collection(tag)
+
+    if cached:
+        return cached
+
+    existing = find_collection_by_title(tag)
+
+    if existing:
+        handle = existing.get("handle", "")
+
+        _save_collection_cache(
+            tag,
+            existing["id"],
+            handle,
+        )
+
+        return {
+            "id": existing["id"],
+            "handle": handle,
+        }
+
+    created = create_automated_collection(tag)
+    handle = created.get("handle", "")
+
+    _save_collection_cache(
+        tag,
+        created["id"],
+        handle,
+    )
+
+    return {
+        "id": created["id"],
+        "handle": handle,
+    }

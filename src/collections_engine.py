@@ -259,6 +259,24 @@ def get_marketplace_tag(
     return "Global Import"
 
 
+COLLECTION_EXCLUDED_PREFIXES = (
+    "AI:",
+    "ASIN:",
+    "Product Type:",
+)
+
+
+def is_collection_worthy_tag(tag: str) -> bool:
+    text = safe_text(tag)
+
+    if not text:
+        return False
+
+    return not text.startswith(
+        COLLECTION_EXCLUDED_PREFIXES
+    )
+
+
 def build_collection_tags(
     title: str,
     bullets: list[str],

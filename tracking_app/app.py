@@ -47,6 +47,11 @@ SOC_CODE_ALPHABET = string.ascii_uppercase + string.digits
 initialize_database()
 
 
+@app.route("/")
+def landing():
+    return render_template("landing.html")
+
+
 def generate_soc_code() -> str:
     suffix = "".join(
         random.choices(SOC_CODE_ALPHABET, k=8)
@@ -457,6 +462,7 @@ def track(soc_code: str):
         "track.html",
         order=order,
         timeline=timeline,
+        status_stages=STATUS_STAGES,
     )
 
 

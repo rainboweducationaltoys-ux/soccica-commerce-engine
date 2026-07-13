@@ -26,6 +26,9 @@ PRODUCT_COLUMNS: dict[str, str] = {
     "duplicate_reason": "TEXT",
     "matched_asin": "TEXT",
     "similarity": "REAL",
+    "spotlight_amazon_price_aed": "REAL",
+    "spotlight_category": "TEXT",
+    "spotlight_scan_date": "TEXT",
 }
 
 

@@ -46,6 +46,10 @@ UAE_LAST_MILE_COST_AED = float(
     os.getenv("UAE_LAST_MILE_COST_AED", "20")
 )
 
+PRICE_MULTIPLIER = float(
+    os.getenv("PRICE_MULTIPLIER", "0.80")
+)
+
 
 def round_shopify_price(price: float) -> float:
     rounded = math.ceil(price / 10) * 10
@@ -145,6 +149,34 @@ def calculate_selling_price(
         ),
         "estimated_gross_profit_aed": round(
             estimated_gross_profit,
+            2,
+        ),
+    }
+
+
+def calculate_spotlight_selling_price(
+    amazon_price_aed: float,
+) -> dict[str, float]:
+    if amazon_price_aed <= 0:
+        raise ValueError(
+            "Amazon fiyatı sıfırdan büyük olmalıdır."
+        )
+
+    shopify_price_aed = round_shopify_price(
+        amazon_price_aed * PRICE_MULTIPLIER
+    )
+
+    return {
+        "price_multiplier": round(
+            PRICE_MULTIPLIER,
+            4,
+        ),
+        "amazon_price_aed": round(
+            amazon_price_aed,
+            2,
+        ),
+        "shopify_price_aed": round(
+            shopify_price_aed,
             2,
         ),
     }

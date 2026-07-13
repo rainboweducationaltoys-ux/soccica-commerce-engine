@@ -9,7 +9,10 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from ai_rewrite import rewrite_product_content
-from collections_engine import build_collection_tags
+from collections_engine import (
+    build_collection_tags,
+    is_collection_worthy_tag,
+)
 from database import (
     get_connection,
     initialize_database,
@@ -17,6 +20,7 @@ from database import (
     update_product_status,
 )
 from duplicate_engine import check_local_duplicate
+from logging_setup import configure_logging
 from product_store import (
     get_ready_products,
     migrate_product_table,
@@ -24,11 +28,14 @@ from product_store import (
 from shopify_api import (
     create_draft_product_with_price,
     find_product_by_asin,
+    get_or_create_automated_collection,
     set_product_metafields,
 )
 
 
 load_dotenv()
+
+logger = configure_logging("soccica.publisher")
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -184,12 +191,19 @@ def main() -> None:
 
     if not products:
         print("Shopify için hazır ürün bulunamadı.")
+        logger.info("Shopify için hazır ürün bulunamadı.")
         return
 
     print("=" * 70)
     print("SOCCICA SQLITE SHOPIFY PUBLISHER")
     print("=" * 70)
     print("Bu çalışmada yayınlanacak:", len(products))
+
+    logger.info(
+        "Publisher başlıyor. yayinlanacak=%d dry_run=%s",
+        len(products),
+        DRY_RUN,
+    )
 
     success_count = 0
     duplicate_count = 0
@@ -519,6 +533,24 @@ def main() -> None:
 
             variant = product.get("variant", {})
 
+            for tag in tags:
+                if not is_collection_worthy_tag(tag):
+                    continue
+
+                try:
+                    get_or_create_automated_collection(
+                        tag
+                    )
+                except Exception as error:
+                    logger.error(
+                        "%s koleksiyon oluşturma hatası "
+                        "(tag=%s): %s",
+                        asin,
+                        tag,
+                        error,
+                        exc_info=True,
+                    )
+
             metafields = build_product_metafields(
                 product_id=product["id"],
                 asin=asin,
@@ -600,6 +632,14 @@ def main() -> None:
             )
 
             print("Shopify hatası:", error_text)
+
+            logger.error(
+                "%s Shopify hatası: %s",
+                asin,
+                error_text,
+                exc_info=True,
+            )
+
             error_count += 1
 
     print("\n" + "=" * 70)
@@ -614,6 +654,14 @@ def main() -> None:
             "Dry-run (gerçek gönderim yapılmadı):",
             dry_run_count,
         )
+
+    logger.info(
+        "Publisher tamamlandı. yeni=%d duplicate=%d hatali=%d dry_run=%d",
+        success_count,
+        duplicate_count,
+        error_count,
+        dry_run_count,
+    )
 
 
 if __name__ == "__main__":

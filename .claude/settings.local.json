@@ -10,7 +10,8 @@
       "Bash(DRY_RUN=true PYTHONPATH=src .venv/bin/python -c ' *)",
       "Bash(sqlite3 /Users/kamil/Desktop/soccica-amazon-importer/data/soccica.db \"SELECT COUNT\\(*\\) FROM products WHERE asin='TESTASIN1';\")",
       "Bash(DRY_RUN=false PYTHONPATH=src .venv/bin/python -c ' *)",
-      "Bash(git --version)"
+      "Bash(git --version)",
+      "Bash(PYTHONPATH=src .venv/bin/python)"
     ]
   }
 }

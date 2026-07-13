@@ -164,3 +164,48 @@ def scrape_complete_offer(
         result["images"] = get_images(page)
 
     return result
+
+
+def scrape_content_only(
+    page: Page,
+    asin: str,
+    url: str,
+) -> dict[str, Any]:
+    page.goto(
+        url,
+        wait_until="domcontentloaded",
+        timeout=90_000,
+    )
+
+    try:
+        page.locator("#productTitle").wait_for(
+            state="visible",
+            timeout=20_000,
+        )
+    except Exception:
+        pass
+
+    title = get_title(page)
+
+    if not title:
+        return {
+            "asin": asin,
+            "source_url": url,
+            "status": "content_missing",
+            "title": "",
+            "brand": "",
+            "bullets": [],
+            "description": "",
+            "images": [],
+        }
+
+    return {
+        "asin": asin,
+        "source_url": url,
+        "status": "ok",
+        "title": title,
+        "brand": get_brand(page),
+        "bullets": get_bullets(page),
+        "description": get_description(page),
+        "images": get_images(page),
+    }
