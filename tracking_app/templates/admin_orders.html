@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin — Orders</title>
+    <style>
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            color: #666;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+        }
+        a { color: #1a5fb4; }
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="top-bar">
+        <h1>Orders</h1>
+        <a href="{{ url_for('admin_logout') }}">Log out</a>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>SOC code</th>
+                <th>Customer</th>
+                <th>Status</th>
+                <th>Last updated</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for order in orders %}
+            <tr>
+                <td><a href="{{ url_for('admin_order_detail', soc_code=order.soc_tracking_code) }}">{{ order.soc_tracking_code }}</a></td>
+                <td>{{ order.customer_name or "—" }}</td>
+                <td>{{ order.status }}</td>
+                <td>{{ order.updated_at.strftime("%d %b %Y, %H:%M") }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No orders yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
