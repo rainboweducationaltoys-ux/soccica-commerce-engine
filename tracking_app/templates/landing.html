@@ -99,46 +99,6 @@
             font-size: 0.9rem;
         }
 
-        .auth-prompt {
-            background: #F7F6FD;
-            border: 1px solid #E4E1FA;
-            border-radius: 10px;
-            padding: 20px;
-        }
-
-        .auth-prompt p {
-            margin: 0 0 14px;
-            color: #444;
-        }
-
-        .auth-buttons {
-            display: flex;
-            gap: 10px;
-        }
-
-        .btn-primary, .btn-secondary {
-            display: inline-block;
-            padding: 9px 18px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 0.9rem;
-        }
-
-        .btn-primary {
-            background: #4C3FCB;
-            color: #fff;
-        }
-
-        .btn-primary:hover { background: #3d31a8; }
-
-        .btn-secondary {
-            background: #fff;
-            color: #4C3FCB;
-            border: 1px solid #4C3FCB;
-        }
-
-        .btn-secondary:hover { background: #F7F6FD; }
-
         .utility-row {
             display: flex;
             gap: 10px;
@@ -201,6 +161,25 @@
         .status-banner .label {
             font-weight: 700;
             font-size: 1.05rem;
+        }
+
+        .ordered-by {
+            color: #444;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+
+        .ordered-by strong { color: #1B1836; }
+
+        .sign-in-nudge {
+            color: #999;
+            font-size: 0.85rem;
+            margin-bottom: 20px;
+        }
+
+        .sign-in-nudge a {
+            color: #4C3FCB;
+            font-weight: 600;
         }
 
         /* --- Vertical timeline --- */
@@ -383,6 +362,13 @@
                     </div>
 
                     {% if authorized %}
+                    <div class="ordered-by">Ordered by: <strong>{{ order.customer_name }}</strong></div>
+                    {% else %}
+                    <div class="sign-in-nudge">
+                        <a href="{{ url_for('login', code=code) }}">Sign in</a> to see who placed this order.
+                    </div>
+                    {% endif %}
+
                     <ul class="timeline">
                         {% for event in timeline %}
                         <li>
@@ -399,15 +385,6 @@
                         </li>
                         {% endfor %}
                     </ul>
-                    {% else %}
-                    <div class="auth-prompt">
-                        <p>Sign in to see full order history.</p>
-                        <div class="auth-buttons">
-                            <a class="btn-primary" href="{{ url_for('login', code=code) }}">Login</a>
-                            <a class="btn-secondary" href="{{ url_for('register', code=code) }}">Register</a>
-                        </div>
-                    </div>
-                    {% endif %}
                 {% endif %}
             {% else %}
                 <p class="instruction">Enter your tracking code to see your order status.</p>

@@ -102,6 +102,11 @@ def index():
         order = get_order_by_code(code)
 
         if order:
+            # Timeline is public to anyone with the code — same data EMX
+            # shows for any tracking number. Login only gates the extra
+            # "Ordered by" detail below, not the timeline itself.
+            timeline = get_timeline_for_code(code)
+
             session_email = session.get("customer_email", "")
 
             if session_email:
@@ -109,13 +114,6 @@ def index():
                     session_email,
                     order.get("customer_email", ""),
                 )
-
-                if authorized:
-                    timeline = get_timeline_for_code(code)
-                else:
-                    # Logged in but wrong account — must look identical
-                    # to "code not found", never reveal the code exists.
-                    order = None
 
     return render_template(
         "landing.html",
