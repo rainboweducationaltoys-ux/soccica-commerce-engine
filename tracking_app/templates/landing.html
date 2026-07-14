@@ -1,23 +1,25 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Soccica Trading LLC — Sipariş Takip</title>
+    <title>Soccica Express — Order Tracking</title>
     <style>
         * { box-sizing: border-box; }
 
         body {
             font-family: -apple-system, Segoe UI, Roboto, sans-serif;
             margin: 0;
-            color: #222;
+            color: #333;
+            background: #fff;
         }
 
         a { text-decoration: none; color: inherit; }
 
         /* --- Nav --- */
         .nav {
-            background: #FBF4EA;
+            background: #fff;
+            border-bottom: 1px solid #eee;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -30,199 +32,418 @@
             font-weight: 700;
             font-size: 1.1rem;
             letter-spacing: 0.01em;
+            color: #1B1836;
         }
 
         .nav-links {
             display: flex;
-            gap: 24px;
+            align-items: center;
+            gap: 20px;
             font-size: 0.95rem;
         }
 
-        .nav-links a:hover { opacity: 0.7; }
+        .nav-links a:hover { color: #4C3FCB; }
 
-        /* --- Hero --- */
-        .hero {
-            position: relative;
-            background: linear-gradient(135deg, #6E5EF0 0%, #4C3FCB 100%);
-            padding: 64px 32px 110px;
-            overflow: hidden;
+        .nav-user {
+            color: #666;
+            font-size: 0.9rem;
         }
 
-        .hero-decoration {
-            position: absolute;
-            top: -30px;
-            right: -30px;
-            width: 260px;
-            height: 260px;
-            color: rgba(255, 255, 255, 0.12);
-            transform: rotate(18deg);
+        .nav-links .btn-link {
+            color: #4C3FCB;
+            font-weight: 600;
         }
 
-        .hero-decoration svg {
-            width: 100%;
-            height: 100%;
+        /* --- Layout --- */
+        .layout {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr;
+            gap: 40px;
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 48px 32px;
+            align-items: start;
         }
 
-        .hero-content {
-            max-width: 640px;
-            position: relative;
-            z-index: 1;
+        @media (max-width: 800px) {
+            .layout {
+                grid-template-columns: 1fr;
+                padding: 32px 20px;
+            }
         }
 
-        .eyebrow {
-            color: #FFC94D;
-            text-transform: uppercase;
-            letter-spacing: 0.12em;
-            font-size: 0.8rem;
-            font-weight: 700;
-            margin: 0 0 12px;
+        /* --- Left column --- */
+        .instruction {
+            color: #777;
+            font-size: 1rem;
         }
 
-        .hero h1 {
-            color: #fff;
-            font-size: 2rem;
-            line-height: 1.25;
-            margin: 0 0 16px;
-        }
-
-        .hero h1 .accent { color: #FFC94D; }
-
-        .hero .subtext {
-            color: rgba(255, 255, 255, 0.8);
-            font-size: 1.05rem;
-            margin: 0;
-            max-width: 480px;
-        }
-
-        /* --- Search box --- */
-        .track-box {
-            position: relative;
-            z-index: 1;
-            margin-top: 40px;
-            background: #fff;
-            border-radius: 14px;
-            padding: 10px;
+        .code-row {
             display: flex;
-            gap: 8px;
-            max-width: 420px;
-            box-shadow: 0 12px 30px rgba(27, 24, 54, 0.25);
+            align-items: baseline;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
         }
 
-        .track-box input {
-            flex: 1;
-            border: none;
-            outline: none;
-            padding: 10px 12px;
-            font-size: 0.95rem;
+        .code-heading {
+            font-size: 1.6rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            margin: 0;
+            color: #1B1836;
+        }
+
+        .inline-msg {
+            color: #999;
+            font-size: 0.9rem;
+        }
+
+        .auth-prompt {
+            background: #F7F6FD;
+            border: 1px solid #E4E1FA;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .auth-prompt p {
+            margin: 0 0 14px;
+            color: #444;
+        }
+
+        .auth-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-primary, .btn-secondary {
+            display: inline-block;
+            padding: 9px 18px;
             border-radius: 8px;
-            min-width: 0;
+            font-weight: 600;
+            font-size: 0.9rem;
         }
 
-        .track-box button {
+        .btn-primary {
+            background: #4C3FCB;
+            color: #fff;
+        }
+
+        .btn-primary:hover { background: #3d31a8; }
+
+        .btn-secondary {
+            background: #fff;
+            color: #4C3FCB;
+            border: 1px solid #4C3FCB;
+        }
+
+        .btn-secondary:hover { background: #F7F6FD; }
+
+        .utility-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        .utility-row button {
+            background: #fff;
+            border: 1px solid #ddd;
+            color: #444;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        .utility-row button:hover:not(.disabled) {
+            border-color: #4C3FCB;
+            color: #4C3FCB;
+        }
+
+        .utility-row button.disabled {
+            color: #bbb;
+            cursor: not-allowed;
+        }
+
+        /* --- Status banner --- */
+        .status-banner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 28px;
+        }
+
+        .status-banner.delivered {
+            background: #eaf7ec;
+            color: #1e7c34;
+        }
+
+        .status-banner.in-progress {
+            background: #ECE9FC;
+            color: #4C3FCB;
+        }
+
+        .status-banner .icon {
+            flex-shrink: 0;
+            width: 34px;
+            height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        .status-banner .icon svg { width: 18px; height: 18px; }
+
+        .status-banner .label {
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+
+        /* --- Vertical timeline --- */
+        ul.timeline {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        ul.timeline li {
+            position: relative;
+            padding: 0 0 26px 34px;
+        }
+
+        ul.timeline li:last-child { padding-bottom: 0; }
+
+        ul.timeline li::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            top: 22px;
+            bottom: 0;
+            width: 2px;
+            background: #e0dced;
+        }
+
+        ul.timeline li:last-child::before { display: none; }
+
+        .timeline-icon {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #6E5EF0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .timeline-icon svg { width: 12px; height: 12px; color: #fff; }
+
+        .status-title { font-weight: 600; margin-bottom: 2px; color: #1B1836; }
+        .note { color: #666; font-size: 0.9rem; margin-bottom: 2px; }
+        .date { color: #999; font-size: 0.8rem; }
+
+        /* --- Right column: search card --- */
+        .search-card {
+            background: #fff;
+            border: 1px solid #eee;
+            border-radius: 14px;
+            padding: 24px;
+            box-shadow: 0 8px 24px rgba(27, 24, 54, 0.06);
+        }
+
+        .tab {
+            display: inline-block;
+            background: #F7F6FD;
+            color: #4C3FCB;
+            font-weight: 600;
+            font-size: 0.85rem;
+            padding: 6px 14px;
+            border-radius: 8px;
+            margin-bottom: 18px;
+        }
+
+        .input-row {
+            position: relative;
+            margin-bottom: 14px;
+        }
+
+        .input-row input {
+            width: 100%;
+            padding: 11px 36px 11px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            outline: none;
+        }
+
+        .input-row input:focus { border-color: #4C3FCB; }
+
+        .clear-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #999;
+            font-size: 1.2rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 2px 6px;
+        }
+
+        .clear-btn:hover { color: #444; }
+
+        .track-btn {
+            width: 100%;
             background: #4C3FCB;
             color: #fff;
             border: none;
-            padding: 10px 20px;
+            padding: 12px;
             border-radius: 8px;
             font-weight: 600;
             font-size: 0.95rem;
             cursor: pointer;
-            white-space: nowrap;
         }
 
-        .track-box button:hover { background: #3d31a8; }
+        .track-btn:hover { background: #3d31a8; }
 
-        /* --- Stats bar --- */
-        .stats-bar {
-            background: #1B1836;
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 24px;
-            padding: 40px 32px;
+        /* --- Footer --- */
+        .footer {
+            border-top: 1px solid #eee;
+            padding: 24px 32px;
+            text-align: center;
+            color: #999;
+            font-size: 0.85rem;
         }
 
-        .stat h3 {
-            color: #fff;
-            font-size: 1.05rem;
-            margin: 0 0 6px;
-        }
-
-        .stat p {
-            color: rgba(255, 255, 255, 0.65);
-            font-size: 0.9rem;
-            margin: 0;
-            line-height: 1.4;
-        }
-
-        @media (max-width: 720px) {
-            .stats-bar { grid-template-columns: repeat(2, 1fr); }
-            .hero h1 { font-size: 1.6rem; }
-            .track-box { max-width: 100%; }
-        }
-
-        @media (max-width: 480px) {
-            .stats-bar { grid-template-columns: 1fr; }
-        }
+        .footer p { margin: 2px 0; }
     </style>
 </head>
 <body>
     <nav class="nav">
-        <div class="wordmark">Soccica Trading LLC</div>
+        <div class="wordmark">Soccica Express</div>
         <div class="nav-links">
             <a href="/">Home</a>
-            <a href="#track-box">Track order</a>
-            <a href="#">Contact</a>
+            {% if customer_email %}
+            <span class="nav-user">{{ customer_name or customer_email }}</span>
+            <a class="btn-link" href="{{ url_for('logout') }}">Logout</a>
+            {% else %}
+            <a class="btn-link" href="{{ url_for('login', code=code) if code else url_for('login') }}">Login</a>
+            <a class="btn-link" href="{{ url_for('register', code=code) if code else url_for('register') }}">Register</a>
+            {% endif %}
         </div>
     </nav>
 
-    <section class="hero">
-        <div class="hero-decoration" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                <path d="M12 3l9 5v8l-9 5-9-5V8l9-5z" />
-                <path d="M3 8l9 5 9-5" />
-                <path d="M12 13v8" />
-            </svg>
-        </div>
+    <main class="layout">
+        <section class="left-col">
+            {% if code %}
+                <div class="code-row">
+                    <h1 class="code-heading">{{ code }}</h1>
+                    {% if not order %}
+                    <span class="inline-msg">No tracking info available yet</span>
+                    {% endif %}
+                </div>
 
-        <div class="hero-content">
-            <p class="eyebrow">Kargonuz yolda</p>
-            <h1>Paketiniz nerede,<br>her an <span class="accent">öğrenin.</span></h1>
-            <p class="subtext">Siparişinizin şu an nerede olduğunu SOC takip kodunuzla anında görün.</p>
-        </div>
+                {% if order and not authorized %}
+                <div class="auth-prompt">
+                    <p>Sign in to view your order details.</p>
+                    <div class="auth-buttons">
+                        <a class="btn-primary" href="{{ url_for('login', code=code) }}">Login</a>
+                        <a class="btn-secondary" href="{{ url_for('register', code=code) }}">Register</a>
+                    </div>
+                </div>
+                {% endif %}
 
-        <form class="track-box" id="track-box" onsubmit="return goToTracking(event)">
-            <input type="text" id="soc-code-input" name="code" placeholder="Takip kodunuzu girin (SOC...)" required>
-            <button type="submit">Takip et</button>
-        </form>
-    </section>
+                {% if order and authorized %}
+                    <div class="utility-row">
+                        <button type="button" onclick="copyLink()">Copy link</button>
+                        <button type="button" class="disabled" disabled title="Coming soon">Download as Excel</button>
+                    </div>
 
-    <section class="stats-bar">
-        <div class="stat">
-            <h3>Sipariş onaylandı</h3>
-            <p>Siparişiniz alındı ve işleme kondu.</p>
-        </div>
-        <div class="stat">
-            <h3>Uluslararası transit</h3>
-            <p>Paketiniz size doğru yola çıktı.</p>
-        </div>
-        <div class="stat">
-            <h3>Dubai'ye ulaştı</h3>
-            <p>BAE gümrüğünden geçti.</p>
-        </div>
-        <div class="stat">
-            <h3>Teslim edildi</h3>
-            <p>Kapınıza kadar ulaştı.</p>
-        </div>
-    </section>
+                    {% set is_delivered = order.status == "Delivered" %}
+                    <div class="status-banner {% if is_delivered %}delivered{% else %}in-progress{% endif %}">
+                        <div class="icon">
+                            {% if is_delivered %}
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M5 13l4 4L19 7" />
+                            </svg>
+                            {% elif order.status == "Out for Delivery" %}
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="1" y="7" width="13" height="10" rx="1"/>
+                                <path d="M14 10h4l3 3v4h-7z"/>
+                                <circle cx="5.5" cy="19" r="1.5"/>
+                                <circle cx="17.5" cy="19" r="1.5"/>
+                            </svg>
+                            {% else %}
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 3l9 5v8l-9 5-9-5V8l9-5z" />
+                                <path d="M3 8l9 5 9-5" />
+                                <path d="M12 13v8" />
+                            </svg>
+                            {% endif %}
+                        </div>
+                        <div class="label">{{ order.status }}</div>
+                    </div>
+
+                    <ul class="timeline">
+                        {% for event in timeline %}
+                        <li>
+                            <div class="timeline-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div class="status-title">{{ event.status }}</div>
+                            {% if event.public_note %}
+                            <div class="note">{{ event.public_note }}</div>
+                            {% endif %}
+                            <div class="date">{{ event.created_at.strftime("%d %b %Y, %H:%M") }}</div>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            {% else %}
+                <p class="instruction">Enter your tracking code to see your order status.</p>
+            {% endif %}
+        </section>
+
+        <aside class="right-col">
+            <div class="search-card">
+                <div class="tab">Track by code</div>
+                <form method="get" action="/">
+                    <div class="input-row">
+                        <input type="text" name="code" id="code-input" value="{{ code }}" placeholder="Enter your tracking code (SOC...)">
+                        {% if code %}
+                        <button type="button" class="clear-btn" onclick="clearCode()" aria-label="Clear">&times;</button>
+                        {% endif %}
+                    </div>
+                    <button type="submit" class="track-btn">Track</button>
+                </form>
+            </div>
+        </aside>
+    </main>
+
+    <footer class="footer">
+        <p>Soccica Trading LLC — Dubai, UAE</p>
+        <p>info@soccica.ae</p>
+    </footer>
 
     <script>
-        function goToTracking(event) {
-            event.preventDefault();
-            var code = document.getElementById("soc-code-input").value.trim();
-            if (code) {
-                window.location.href = "/track/" + encodeURIComponent(code);
-            }
-            return false;
+        function copyLink() {
+            navigator.clipboard.writeText(window.location.href);
+            alert("Link copied.");
+        }
+
+        function clearCode() {
+            document.getElementById("code-input").value = "";
+            window.location.href = "/";
         }
     </script>
 </body>

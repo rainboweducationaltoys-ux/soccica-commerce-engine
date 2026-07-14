@@ -18,6 +18,10 @@ from flask import (
     session,
     url_for,
 )
+from werkzeug.security import (
+    check_password_hash,
+    generate_password_hash,
+)
 
 from db import get_connection, initialize_database
 
@@ -47,9 +51,233 @@ SOC_CODE_ALPHABET = string.ascii_uppercase + string.digits
 initialize_database()
 
 
+def get_order_by_code(soc_code: str):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM orders
+                WHERE soc_tracking_code = %s
+                """,
+                (soc_code,),
+            )
+
+            return cursor.fetchone()
+
+
+def get_timeline_for_code(soc_code: str):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT status, public_note, created_at
+                FROM shipment_timeline
+                WHERE soc_tracking_code = %s
+                ORDER BY created_at ASC
+                """,
+                (soc_code,),
+            )
+
+            return cursor.fetchall()
+
+
+def emails_match(email_a: str, email_b: str) -> bool:
+    return bool(
+        email_a
+        and email_b
+        and email_a.strip().lower() == email_b.strip().lower()
+    )
+
+
 @app.route("/")
-def landing():
-    return render_template("landing.html")
+def index():
+    code = request.args.get("code", "").strip().upper()
+
+    order = None
+    timeline = None
+    authorized = False
+
+    if code:
+        order = get_order_by_code(code)
+
+        if order:
+            session_email = session.get("customer_email", "")
+
+            if session_email:
+                authorized = emails_match(
+                    session_email,
+                    order.get("customer_email", ""),
+                )
+
+                if authorized:
+                    timeline = get_timeline_for_code(code)
+                else:
+                    # Logged in but wrong account — must look identical
+                    # to "code not found", never reveal the code exists.
+                    order = None
+
+    return render_template(
+        "landing.html",
+        code=code,
+        order=order,
+        authorized=authorized,
+        timeline=timeline,
+        status_stages=STATUS_STAGES,
+        customer_email=session.get("customer_email"),
+        customer_name=session.get("customer_name"),
+    )
+
+
+@app.route("/track/<soc_code>")
+def track_redirect(soc_code: str):
+    return redirect(
+        url_for(
+            "index",
+            code=soc_code.strip().upper(),
+        )
+    )
+
+
+@app.route(
+    "/register",
+    methods=["GET", "POST"],
+)
+def register():
+    code = (
+        request.values.get("code", "")
+        .strip()
+        .upper()
+    )
+
+    if request.method == "POST":
+        email = (
+            request.form.get("email", "")
+            .strip()
+            .lower()
+        )
+        password = request.form.get("password", "")
+        name = request.form.get("name", "").strip()
+        code = (
+            request.form.get("code", "")
+            .strip()
+            .upper()
+        )
+
+        if "@" not in email:
+            flash("Please enter a valid email address.")
+        elif len(password) < 6:
+            flash("Password must be at least 6 characters.")
+        else:
+            password_hash = generate_password_hash(
+                password
+            )
+
+            try:
+                with get_connection() as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            """
+                            INSERT INTO customers (
+                                email,
+                                password_hash,
+                                name
+                            )
+                            VALUES (%s, %s, %s)
+                            """,
+                            (
+                                email,
+                                password_hash,
+                                name,
+                            ),
+                        )
+
+                session["customer_email"] = email
+                session["customer_name"] = name
+
+                return redirect(
+                    url_for(
+                        "index",
+                        code=code or None,
+                    )
+                )
+
+            except psycopg2.errors.UniqueViolation:
+                flash(
+                    "An account with this email already exists. "
+                    "Try logging in instead."
+                )
+
+    return render_template(
+        "register.html",
+        code=code,
+    )
+
+
+@app.route(
+    "/login",
+    methods=["GET", "POST"],
+)
+def login():
+    code = (
+        request.values.get("code", "")
+        .strip()
+        .upper()
+    )
+
+    if request.method == "POST":
+        email = (
+            request.form.get("email", "")
+            .strip()
+            .lower()
+        )
+        password = request.form.get("password", "")
+        code = (
+            request.form.get("code", "")
+            .strip()
+            .upper()
+        )
+
+        with get_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT email, password_hash, name
+                    FROM customers
+                    WHERE email = %s
+                    """,
+                    (email,),
+                )
+
+                customer = cursor.fetchone()
+
+        if customer and check_password_hash(
+            customer["password_hash"],
+            password,
+        ):
+            session["customer_email"] = customer["email"]
+            session["customer_name"] = customer["name"]
+
+            return redirect(
+                url_for(
+                    "index",
+                    code=code or None,
+                )
+            )
+
+        flash("Invalid email or password.")
+
+    return render_template(
+        "login.html",
+        code=code,
+    )
+
+
+@app.route("/logout")
+def logout():
+    session.pop("customer_email", None)
+    session.pop("customer_name", None)
+    return redirect(url_for("index"))
 
 
 def generate_soc_code() -> str:
@@ -142,7 +370,7 @@ def create_order_with_soc_code(
                         """,
                         (
                             soc_code,
-                            "Siparişiniz onaylandı.",
+                            "Your order has been confirmed.",
                         ),
                     )
 
@@ -420,50 +648,6 @@ def admin_order_detail(soc_code: str):
     )
 
 
-@app.route("/track/<soc_code>")
-def track(soc_code: str):
-    soc_code = soc_code.strip().upper()
-
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT soc_tracking_code, status
-                FROM orders
-                WHERE soc_tracking_code = %s
-                """,
-                (soc_code,),
-            )
-
-            order = cursor.fetchone()
-
-            if not order:
-                return (
-                    render_template(
-                        "track_not_found.html",
-                        soc_code=soc_code,
-                    ),
-                    404,
-                )
-
-            cursor.execute(
-                """
-                SELECT status, public_note, created_at
-                FROM shipment_timeline
-                WHERE soc_tracking_code = %s
-                ORDER BY created_at ASC
-                """,
-                (soc_code,),
-            )
-
-            timeline = cursor.fetchall()
-
-    return render_template(
-        "track.html",
-        order=order,
-        timeline=timeline,
-        status_stages=STATUS_STAGES,
-    )
 
 
 if __name__ == "__main__":
