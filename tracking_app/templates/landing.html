@@ -351,17 +351,7 @@
                     {% endif %}
                 </div>
 
-                {% if order and not authorized %}
-                <div class="auth-prompt">
-                    <p>Sign in to view your order details.</p>
-                    <div class="auth-buttons">
-                        <a class="btn-primary" href="{{ url_for('login', code=code) }}">Login</a>
-                        <a class="btn-secondary" href="{{ url_for('register', code=code) }}">Register</a>
-                    </div>
-                </div>
-                {% endif %}
-
-                {% if order and authorized %}
+                {% if order %}
                     <div class="utility-row">
                         <button type="button" onclick="copyLink()">Copy link</button>
                         <button type="button" class="disabled" disabled title="Coming soon">Download as Excel</button>
@@ -392,6 +382,7 @@
                         <div class="label">{{ order.status }}</div>
                     </div>
 
+                    {% if authorized %}
                     <ul class="timeline">
                         {% for event in timeline %}
                         <li>
@@ -408,6 +399,15 @@
                         </li>
                         {% endfor %}
                     </ul>
+                    {% else %}
+                    <div class="auth-prompt">
+                        <p>Sign in to see full order history.</p>
+                        <div class="auth-buttons">
+                            <a class="btn-primary" href="{{ url_for('login', code=code) }}">Login</a>
+                            <a class="btn-secondary" href="{{ url_for('register', code=code) }}">Register</a>
+                        </div>
+                    </div>
+                    {% endif %}
                 {% endif %}
             {% else %}
                 <p class="instruction">Enter your tracking code to see your order status.</p>
