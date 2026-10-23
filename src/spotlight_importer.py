@@ -42,6 +42,7 @@ SAFE_TO_REPRICE_STATUSES = {
     "retry",
     "error",
     "spotlight_priced",
+    "spotlight_retry",
 }
 
 AMAZON_FBA_OFFER_PATTERN = re.compile(

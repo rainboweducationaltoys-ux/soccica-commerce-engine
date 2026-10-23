@@ -1,4 +1,10 @@
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 # Projenin ana klasörü
@@ -37,3 +43,15 @@ USER_AGENT = (
 WAIT_BETWEEN_PRODUCTS_MIN = 2
 WAIT_BETWEEN_PRODUCTS_MAX = 5
 MAX_RETRIES = 3
+
+
+DRY_RUN_TRUE_VALUES = ("1", "true", "yes")
+
+
+def is_dry_run() -> bool:
+    return (
+        os.getenv("DRY_RUN", "false")
+        .strip()
+        .lower()
+        in DRY_RUN_TRUE_VALUES
+    )

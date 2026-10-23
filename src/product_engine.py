@@ -185,13 +185,18 @@ def scrape_content_only(
     except Exception:
         pass
 
+    status = detect_page_status(page)
+
     title = get_title(page)
 
-    if not title:
+    if status == "ok" and not title:
+        status = "content_missing"
+
+    if status != "ok":
         return {
             "asin": asin,
             "source_url": url,
-            "status": "content_missing",
+            "status": status,
             "title": "",
             "brand": "",
             "bullets": [],

@@ -209,7 +209,7 @@ def get_spotlight_priced_asins(
             """
             SELECT asin
             FROM products
-            WHERE status = 'spotlight_priced'
+            WHERE status IN ('spotlight_priced', 'spotlight_retry')
             ORDER BY updated_at ASC
             LIMIT ?
             """,
@@ -382,6 +382,7 @@ def get_status_summary() -> dict[str, int]:
         "pending": 0,
         "processing": 0,
         "spotlight_priced": 0,
+        "spotlight_retry": 0,
         "ready_for_shopify": 0,
         "published": 0,
         "skipped": 0,

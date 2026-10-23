@@ -1,5 +1,58 @@
 # Soccica Commerce Engine
 
+## Handoff (2026-10-23) — read this first
+
+The project moved from Kamil's machine to a new owner, who continues with their own
+Claude. Pricing and other parts of the system are being changed after this handoff,
+so treat the pricing description further down as the *old* behavior until it is
+updated here. Parts of this file below the handoff section were written before the
+handoff and are partly stale (e.g. the "not a git repo yet" gap is long fixed).
+
+**Setup on a new machine**
+1. `git clone` the repo, then unzip the data package (`soccica-handoff-data-*.zip`)
+   into the project root — it restores `data/soccica.db`, `input/` (incl.
+   `input/spotlight_exports/`) and `output/`.
+2. `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`, then
+   `.venv/bin/playwright install chromium`. Scripts call `.venv/bin/python` directly.
+3. Create `.env` yourself (it is never committed). Keys: `SHOPIFY_SHOP`,
+   `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_API_VERSION`,
+   `TARGET_MARGIN_PERCENT`, `PAYMENT_FEE_PERCENT`, `RETURN_RISK_PERCENT`,
+   `CURRENCY_BUFFER_PERCENT`, `UAE_LAST_MILE_COST_AED`, `BATCH_SIZE`,
+   `PAGE_WAIT_SECONDS`, `PUBLISH_LIMIT`, `AI_REWRITE_ENABLED`, `OPENAI_MODEL`,
+   `OPENAI_API_KEY`, `DUPLICATE_TITLE_THRESHOLD`, `PRICE_MULTIPLIER`, `DRY_RUN`,
+   `PARALLEL_WORKERS`, `SPOTLIGHT_BATCH_SIZE`, `PUBLISH_PARALLEL_WORKERS`.
+4. Start with `DRY_RUN=true` and `PUBLISH_LIMIT=1`. On Kamil's machine `.env` was
+   left in live mode (`DRY_RUN=false`, `PUBLISH_LIMIT=100`) — any run there or with a
+   copied `.env` writes real products to the soccica.ae Shopify store.
+
+**Current pipeline (ASIN Spotlight flow, the one actually used)**
+`./run_spotlight.sh` → `src/run_spotlight_all.py`: imports the newest `.xlsx` in
+`input/spotlight_exports/` (`spotlight_importer.py`, status `spotlight_priced`), price
+= Amazon AED price × `PRICE_MULTIPLIER` (`pricing_engine.calculate_spotlight_selling_price`),
+scrapes content only (`run_spotlight_pipeline.py`, status `ready_for_shopify`, or
+`spotlight_retry` on a blocked page), then publishes drafts in parallel
+(`publish_final_products.py`). `run_continuous.sh` loops this until both queues are
+empty (log: `logs/continuous_run.log`). `src/activate_products.py` switches published
+drafts to active in Shopify. The older US/UK/DE landed-cost flow (`run.sh` /
+`run_pipeline.py`) is described further down.
+
+**State at handoff** (`SELECT status, COUNT(*) FROM products GROUP BY status;`)
+- published 9603, skipped 2160 (all `Duplicate: similar_published_title`),
+  error 165 (160 `content_missing` — page 404 / product gone, 5 no UAE-deliverable
+  offer), pending 1.
+- Last continuous run: 2026-07-14 → 2026-07-15, 145 iterations, ended with empty queues.
+
+**Still unverified with real data** — check these first if Shopify drafts look wrong:
+SKU = ASIN via `inventoryItemUpdate`, metafield writes, and duplicate-similarity
+behavior (2160 skips may include false positives).
+
+**Other things to know**
+- `scheduler/com.soccica.weekly.plist` (launchd, Mondays 02:00, runs `run.sh`) was
+  installed on Kamil's Mac. Make sure only one machine runs the pipeline.
+- `tracking_app/` is a separate Flask + Postgres app for `track.soccica.ae`
+  (deployed on Render), sharing the Shopify app's client secret as webhook secret.
+  See `tracking_app/README.md`.
+
 ## Project Purpose
 
 Soccica automates importing profitable products from Amazon into Shopify with minimal
@@ -86,10 +139,8 @@ too, or `save_scraped_product()` will fail with `no such column: ...` on a fresh
   already maps that directly, no `marketplace_name` column needed.
 - **Done:** `DRY_RUN` sandbox mode exists (see below). `input/test_asins.txt` holds
   3 sample ASINs for dry-run scraping batches.
-- No `.gitignore`, not a git repo yet. `.env` (contains Shopify/OpenAI secrets) and
-  `data/soccica.db` currently travel inside backup zips — needs fixing before this
-  becomes a habit. Note: this machine's `git` CLI currently needs Xcode Command Line
-  Tools installed before `git init` will run (`xcode-select --install`).
+- **Done:** git repo + `.gitignore` (`.env`, `data/`, `logs/`, `output/`, `*.zip`
+  excluded). `data/` and `input/spotlight_exports/` travel separately as a data zip.
 - No `logging` module usage anywhere — 200+ raw `print()` calls. Fine for manual runs,
   not fine once a scheduler runs this unattended overnight.
 - Several older/exploratory modules (`global_price_engine.py`,

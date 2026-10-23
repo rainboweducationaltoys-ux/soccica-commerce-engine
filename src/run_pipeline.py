@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 from browser import create_browser, create_context
+from config import is_dry_run
 from database import (
     add_asins,
     get_next_pending_asins,
@@ -81,10 +82,6 @@ PAGE_WAIT_SECONDS = float(
 
 EXPORT_CSV = (
     os.getenv("EXPORT_CSV", "false").lower() == "true"
-)
-
-DRY_RUN = (
-    os.getenv("DRY_RUN", "false").lower() == "true"
 )
 
 RETRY_MAX_ATTEMPTS = int(
@@ -644,7 +641,7 @@ def main() -> None:
 
     asin_input_file = INPUT_FILE
 
-    if DRY_RUN and TEST_INPUT_FILE.exists():
+    if is_dry_run() and TEST_INPUT_FILE.exists():
         asin_input_file = TEST_INPUT_FILE
 
         print(

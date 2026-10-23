@@ -1,6 +1,8 @@
 import html
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from metafields_engine import build_product_metafields
@@ -13,6 +15,7 @@ from collections_engine import (
     build_collection_tags,
     is_collection_worthy_tag,
 )
+from config import is_dry_run
 from database import (
     get_connection,
     initialize_database,
@@ -64,9 +67,17 @@ PUBLISH_LIMIT = int(
     os.getenv("PUBLISH_LIMIT", "1")
 )
 
-DRY_RUN = (
-    os.getenv("DRY_RUN", "false").lower() == "true"
+PUBLISH_PARALLEL_WORKERS = int(
+    os.getenv("PUBLISH_PARALLEL_WORKERS", "4")
 )
+
+PUBLISH_RETRY_MAX_ATTEMPTS = int(
+    os.getenv("PUBLISH_RETRY_MAX_ATTEMPTS", "3")
+)
+
+SHOPIFY_TITLE_MAX_LENGTH = 255
+
+csv_lock = threading.Lock()
 
 
 def safe_text(value: Any) -> str:
@@ -128,13 +139,14 @@ def append_csv_row(
         exist_ok=True,
     )
 
-    pd.DataFrame([row]).to_csv(
-        file_path,
-        mode="a",
-        header=not file_path.exists(),
-        index=False,
-        encoding="utf-8-sig",
-    )
+    with csv_lock:
+        pd.DataFrame([row]).to_csv(
+            file_path,
+            mode="a",
+            header=not file_path.exists(),
+            index=False,
+            encoding="utf-8-sig",
+        )
 
 
 def write_dry_run_payload(
@@ -181,6 +193,525 @@ def save_publish_error(
         )
 
 
+def record_publish_failure(
+    asin: str,
+    attempts_before: int,
+    error_text: str,
+) -> None:
+    if attempts_before < PUBLISH_RETRY_MAX_ATTEMPTS:
+        save_publish_error(asin, error_text)
+    else:
+        update_product_status(
+            asin=asin,
+            status="error",
+            error=(
+                f"{PUBLISH_RETRY_MAX_ATTEMPTS} denemede "
+                f"başarısız, kalıcı hata olarak "
+                f"işaretlendi: {error_text}"
+            ),
+        )
+
+
+def split_into_chunks(
+    items: list[dict[str, Any]],
+    chunk_count: int,
+) -> list[list[dict[str, Any]]]:
+    if not items:
+        return []
+
+    chunk_count = max(
+        1,
+        min(chunk_count, len(items)),
+    )
+
+    base_size, remainder = divmod(
+        len(items),
+        chunk_count,
+    )
+
+    chunks: list[list[dict[str, Any]]] = []
+    start = 0
+
+    for index in range(chunk_count):
+        size = base_size + (
+            1 if index < remainder else 0
+        )
+
+        chunks.append(
+            items[start:start + size]
+        )
+
+        start += size
+
+    return chunks
+
+
+def process_product(
+    prefix: str,
+    index: int,
+    total: int,
+    db_product: dict[str, Any],
+) -> str:
+    asin = safe_text(db_product.get("asin")).upper()
+    attempts_before = int(
+        db_product.get("attempt_count", 0) or 0
+    )
+
+    print("\n" + "=" * 70)
+    print(
+        f"{prefix} Ürün {index}/{total} — {asin}"
+    )
+    print("=" * 70)
+
+    title = safe_text(db_product.get("title"))
+    brand = safe_text(db_product.get("brand"))
+    price_text = safe_text(
+        db_product.get("shopify_price_aed")
+    )
+
+    try:
+        price = float(price_text)
+    except ValueError:
+        price = 0.0
+
+    images = db_product.get("images", [])
+    bullets = db_product.get("bullets", [])
+    description = safe_text(
+        db_product.get("description")
+    )
+    marketplace = safe_text(
+        db_product.get("marketplace")
+    )
+
+    missing: list[str] = []
+
+    if not title:
+        missing.append("title")
+
+    if price <= 0:
+        missing.append("price")
+
+    if not images:
+        missing.append("images")
+
+    if missing:
+        error_text = (
+            "Eksik zorunlu alanlar: "
+            + ", ".join(missing)
+        )
+
+        record_publish_failure(
+            asin,
+            attempts_before,
+            error_text,
+        )
+
+        append_csv_row(
+            ERROR_FILE,
+            {
+                "asin": asin,
+                "title": title,
+                "error": error_text,
+            },
+        )
+
+        print(f"{prefix} {error_text}")
+        return "error"
+
+    try:
+        local_duplicate = check_local_duplicate(
+            asin=asin,
+            title=title,
+        )
+
+        if local_duplicate["is_duplicate"]:
+            if is_dry_run():
+                print(
+                    "[DRY RUN] Durum değiştirilmedi "
+                    "(ready_for_shopify olarak kalıyor)."
+                )
+            else:
+                update_product_status(
+                    asin=asin,
+                    status="skipped",
+                    error=(
+                        "Duplicate: "
+                        + local_duplicate["reason"]
+                    ),
+                )
+
+            append_csv_row(
+                PUBLISHED_FILE,
+                {
+                    "asin": asin,
+                    "shopify_product_id":
+                        local_duplicate.get(
+                            "shopify_product_id",
+                            "",
+                        ),
+                    "shopify_variant_id": "",
+                    "title": title,
+                    "handle":
+                        local_duplicate.get(
+                            "shopify_handle",
+                            "",
+                        ),
+                    "status": "SKIPPED",
+                    "price_aed": price,
+                    "duplicate_found": True,
+                    "duplicate_reason":
+                        local_duplicate["reason"],
+                    "matched_asin":
+                        local_duplicate["matched_asin"],
+                    "matched_title":
+                        local_duplicate["matched_title"],
+                    "similarity":
+                        local_duplicate["similarity"],
+                },
+            )
+
+            print(
+                f"{prefix} SQLite duplicate bulundu, "
+                "ürün atlandı."
+            )
+            print(
+                "Sebep:",
+                local_duplicate["reason"],
+            )
+            print(
+                "Eşleşen ürün:",
+                local_duplicate["matched_title"],
+            )
+            print(
+                "Benzerlik:",
+                local_duplicate["similarity"],
+            )
+
+            return "duplicate"
+
+        existing_product = find_product_by_asin(
+            asin
+        )
+
+        if existing_product:
+            if is_dry_run():
+                print(
+                    "[DRY RUN] Durum değiştirilmedi "
+                    "(ready_for_shopify olarak kalıyor)."
+                )
+            else:
+                mark_published(
+                    asin=asin,
+                    product_id=safe_text(
+                        existing_product.get("id")
+                    ),
+                    variant_id="",
+                    handle=safe_text(
+                        existing_product.get("handle")
+                    ),
+                )
+
+            append_csv_row(
+                PUBLISHED_FILE,
+                {
+                    "asin": asin,
+                    "shopify_product_id":
+                        existing_product.get(
+                            "id",
+                            "",
+                        ),
+                    "shopify_variant_id": "",
+                    "title":
+                        existing_product.get(
+                            "title",
+                            title,
+                        ),
+                    "handle":
+                        existing_product.get(
+                            "handle",
+                            "",
+                        ),
+                    "status":
+                        existing_product.get(
+                            "status",
+                            "",
+                        ),
+                    "price_aed": price,
+                    "duplicate_found": True,
+                },
+            )
+
+            print(
+                f"{prefix} Shopify mağazasında zaten var; "
+                "duplicate olarak atlandı."
+            )
+
+            return "duplicate"
+
+        ai = rewrite_product_content(
+            title=title,
+            bullets=bullets,
+            description=description,
+            brand=brand,
+            asin=asin,
+        )
+
+        title = ai["title"]
+        bullets = ai["bullets"]
+        description = ai["description"]
+        product_type = safe_text(
+            ai.get("product_type", "")
+        )
+
+        if len(title) > SHOPIFY_TITLE_MAX_LENGTH:
+            title = title[
+                :SHOPIFY_TITLE_MAX_LENGTH
+            ].rstrip()
+
+        description_html = build_description_html(
+            description=description,
+            bullets=bullets,
+        )
+
+        tags = build_collection_tags(
+            title=title,
+            bullets=bullets,
+            description=description,
+            brand=brand,
+            product_type=product_type,
+            marketplace=marketplace,
+            shopify_price_aed=price,
+            ai_tags=ai.get("tags", []),
+        )
+
+        tags.append(f"ASIN:{asin}")
+
+        if is_dry_run():
+            dry_run_product_id = f"dry-run-{asin}"
+
+            metafields = build_product_metafields(
+                product_id=dry_run_product_id,
+                asin=asin,
+                marketplace=marketplace,
+                source_url=safe_text(
+                    db_product.get("source_url")
+                ),
+                landed_cost_aed=float(
+                    db_product.get(
+                        "landed_cost_aed", 0
+                    )
+                    or 0
+                ),
+                shopify_price_aed=price,
+                brand=brand,
+                seo_title=ai.get(
+                    "seo_title",
+                    title,
+                ),
+                meta_description=ai.get(
+                    "meta_description",
+                    "",
+                ),
+                product_type=ai.get(
+                    "product_type",
+                    "",
+                ),
+                collections=tags,
+            )
+
+            payload = {
+                "asin": asin,
+                "title": title,
+                "description_html": description_html,
+                "vendor": brand or "Soccica",
+                "product_type": product_type,
+                "tags": tags,
+                "image_urls": images[:12],
+                "price": price,
+                "sku": asin,
+                "metafields": metafields,
+            }
+
+            dry_run_file = write_dry_run_payload(
+                asin,
+                payload,
+            )
+
+            print(
+                f"{prefix} [DRY RUN] Shopify'a "
+                "gönderilecek veri:"
+            )
+            print(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            print(
+                "[DRY RUN] Kaydedildi:",
+                dry_run_file,
+            )
+            print(
+                "[DRY RUN] Durum değiştirilmedi "
+                "(ready_for_shopify olarak kalıyor)."
+            )
+
+            return "dry_run"
+
+        product = create_draft_product_with_price(
+            title=title,
+            description_html=description_html,
+            vendor=brand or "Soccica",
+            product_type=product_type,
+            tags=tags,
+            image_urls=images[:12],
+            price=price,
+            sku=asin,
+        )
+
+        variant = product.get("variant", {})
+
+        for tag in tags:
+            if not is_collection_worthy_tag(tag):
+                continue
+
+            try:
+                get_or_create_automated_collection(
+                    tag
+                )
+            except Exception as error:
+                logger.error(
+                    "%s koleksiyon oluşturma hatası "
+                    "(tag=%s): %s",
+                    asin,
+                    tag,
+                    error,
+                    exc_info=True,
+                )
+
+        metafields = build_product_metafields(
+            product_id=product["id"],
+            asin=asin,
+            marketplace=marketplace,
+            source_url=safe_text(
+                db_product.get("source_url")
+            ),
+            landed_cost_aed=float(
+                db_product.get("landed_cost_aed", 0) or 0
+            ),
+            shopify_price_aed=price,
+            brand=brand,
+            seo_title=ai.get(
+                "seo_title",
+                title,
+            ),
+            meta_description=ai.get(
+                "meta_description",
+                "",
+            ),
+            product_type=ai.get(
+                "product_type",
+                "",
+            ),
+            collections=tags,
+        )
+
+        set_product_metafields(
+            metafields
+        )
+
+        mark_published(
+            asin=asin,
+            product_id=product["id"],
+            variant_id=safe_text(
+                variant.get("id")
+            ),
+            handle=product["handle"],
+        )
+
+        append_csv_row(
+            PUBLISHED_FILE,
+            {
+                "asin": asin,
+                "shopify_product_id": product["id"],
+                "shopify_variant_id":
+                    variant.get("id", ""),
+                "title": product["title"],
+                "handle": product["handle"],
+                "status": product["status"],
+                "price_aed":
+                    variant.get("price", price),
+                "source_marketplace": marketplace,
+                "duplicate_found": False,
+            },
+        )
+
+        print(f"{prefix} Shopify DRAFT oluşturuldu.")
+        print("Başlık:", product["title"])
+        print("Fiyat:", price, "AED")
+
+        return "success"
+
+    except Exception as error:
+        error_text = str(error)
+
+        record_publish_failure(
+            asin,
+            attempts_before,
+            error_text,
+        )
+
+        append_csv_row(
+            ERROR_FILE,
+            {
+                "asin": asin,
+                "title": title,
+                "error": error_text,
+            },
+        )
+
+        print(f"{prefix} Shopify hatası:", error_text)
+
+        logger.error(
+            "%s Shopify hatası: %s",
+            asin,
+            error_text,
+            exc_info=True,
+        )
+
+        return "error"
+
+
+def run_worker(
+    worker_id: int,
+    products: list[dict[str, Any]],
+) -> dict[str, int]:
+    prefix = f"[Worker {worker_id}]"
+
+    counts = {
+        "success": 0,
+        "duplicate": 0,
+        "error": 0,
+        "dry_run": 0,
+    }
+
+    for index, db_product in enumerate(
+        products,
+        start=1,
+    ):
+        outcome = process_product(
+            prefix=prefix,
+            index=index,
+            total=len(products),
+            db_product=db_product,
+        )
+
+        counts[outcome] += 1
+
+    return counts
+
+
 def main() -> None:
     initialize_database()
     migrate_product_table()
@@ -202,7 +733,30 @@ def main() -> None:
     logger.info(
         "Publisher başlıyor. yayinlanacak=%d dry_run=%s",
         len(products),
-        DRY_RUN,
+        is_dry_run(),
+    )
+
+    print("\n" + "!" * 70)
+    if is_dry_run():
+        print(
+            "DRY RUN — Shopify'a hiçbir gerçek yazma "
+            "işlemi yapılmayacak."
+        )
+    else:
+        print(
+            "LIVE ÇALIŞMA — Shopify'a GERÇEK yazma "
+            "işlemi yapılacak."
+        )
+    print("!" * 70)
+
+    chunks = split_into_chunks(
+        products,
+        PUBLISH_PARALLEL_WORKERS,
+    )
+
+    print(
+        f"\nParalel worker sayısı: {len(chunks)} "
+        f"(PUBLISH_PARALLEL_WORKERS={PUBLISH_PARALLEL_WORKERS})"
     )
 
     success_count = 0
@@ -210,437 +764,53 @@ def main() -> None:
     error_count = 0
     dry_run_count = 0
 
-    if DRY_RUN:
-        print(
-            "DRY_RUN aktif — Shopify'a gerçek yazma "
-            "işlemi yapılmayacak."
-        )
-
-    for index, db_product in enumerate(
-        products,
-        start=1,
-    ):
-        asin = safe_text(db_product.get("asin")).upper()
-
-        print("\n" + "=" * 70)
-        print(
-            f"Ürün {index}/{len(products)} — {asin}"
-        )
-        print("=" * 70)
-
-        title = safe_text(db_product.get("title"))
-        brand = safe_text(db_product.get("brand"))
-        price_text = safe_text(
-            db_product.get("shopify_price_aed")
-        )
-
-        try:
-            price = float(price_text)
-        except ValueError:
-            price = 0.0
-
-        images = db_product.get("images", [])
-        bullets = db_product.get("bullets", [])
-        description = safe_text(
-            db_product.get("description")
-        )
-        marketplace = safe_text(
-            db_product.get("marketplace")
-        )
-
-        missing: list[str] = []
-
-        if not title:
-            missing.append("title")
-
-        if price <= 0:
-            missing.append("price")
-
-        if not images:
-            missing.append("images")
-
-        if missing:
-            error_text = (
-                "Eksik zorunlu alanlar: "
-                + ", ".join(missing)
+    with ThreadPoolExecutor(
+        max_workers=len(chunks)
+    ) as executor:
+        futures = {
+            executor.submit(
+                run_worker,
+                worker_id,
+                chunk,
+            ): worker_id
+            for worker_id, chunk in enumerate(
+                chunks,
+                start=1,
             )
+        }
 
-            save_publish_error(
-                asin,
-                error_text,
-            )
+        for future in as_completed(futures):
+            worker_id = futures[future]
 
-            append_csv_row(
-                ERROR_FILE,
-                {
-                    "asin": asin,
-                    "title": title,
-                    "error": error_text,
-                },
-            )
-
-            print(error_text)
-            error_count += 1
-            continue
-
-        try:
-            local_duplicate = check_local_duplicate(
-                asin=asin,
-                title=title,
-            )
-
-            if local_duplicate["is_duplicate"]:
-                if DRY_RUN:
-                    print(
-                        "[DRY RUN] Durum değiştirilmedi "
-                        "(ready_for_shopify olarak kalıyor)."
-                    )
-                else:
-                    update_product_status(
-                        asin=asin,
-                        status="skipped",
-                        error=(
-                            "Duplicate: "
-                            + local_duplicate["reason"]
-                        ),
-                    )
-
-                append_csv_row(
-                    PUBLISHED_FILE,
-                    {
-                        "asin": asin,
-                        "shopify_product_id":
-                            local_duplicate.get(
-                                "shopify_product_id",
-                                "",
-                            ),
-                        "shopify_variant_id": "",
-                        "title": title,
-                        "handle":
-                            local_duplicate.get(
-                                "shopify_handle",
-                                "",
-                            ),
-                        "status": "SKIPPED",
-                        "price_aed": price,
-                        "duplicate_found": True,
-                        "duplicate_reason":
-                            local_duplicate["reason"],
-                        "matched_asin":
-                            local_duplicate["matched_asin"],
-                        "matched_title":
-                            local_duplicate["matched_title"],
-                        "similarity":
-                            local_duplicate["similarity"],
-                    },
-                )
-
-                print(
-                    "SQLite duplicate bulundu, ürün atlandı."
-                )
-                print(
-                    "Sebep:",
-                    local_duplicate["reason"],
-                )
-                print(
-                    "Eşleşen ürün:",
-                    local_duplicate["matched_title"],
-                )
-                print(
-                    "Benzerlik:",
-                    local_duplicate["similarity"],
-                )
-
-                duplicate_count += 1
-                continue
-
-            existing_product = find_product_by_asin(
-                asin
-            )
-
-            if existing_product:
-                if DRY_RUN:
-                    print(
-                        "[DRY RUN] Durum değiştirilmedi "
-                        "(ready_for_shopify olarak kalıyor)."
-                    )
-                else:
-                    mark_published(
-                        asin=asin,
-                        product_id=safe_text(
-                            existing_product.get("id")
-                        ),
-                        variant_id="",
-                        handle=safe_text(
-                            existing_product.get("handle")
-                        ),
-                    )
-
-                append_csv_row(
-                    PUBLISHED_FILE,
-                    {
-                        "asin": asin,
-                        "shopify_product_id":
-                            existing_product.get(
-                                "id",
-                                "",
-                            ),
-                        "shopify_variant_id": "",
-                        "title":
-                            existing_product.get(
-                                "title",
-                                title,
-                            ),
-                        "handle":
-                            existing_product.get(
-                                "handle",
-                                "",
-                            ),
-                        "status":
-                            existing_product.get(
-                                "status",
-                                "",
-                            ),
-                        "price_aed": price,
-                        "duplicate_found": True,
-                    },
-                )
-
-                print(
-                    "Shopify mağazasında zaten var; "
-                    "duplicate olarak atlandı."
-                )
-
-                duplicate_count += 1
-                continue
-
-            ai = rewrite_product_content(
-                title=title,
-                bullets=bullets,
-                description=description,
-                brand=brand,
-                asin=asin,
-            )
-
-            title = ai["title"]
-            bullets = ai["bullets"]
-            description = ai["description"]
-            product_type = safe_text(
-                ai.get("product_type", "")
-            )
-
-            description_html = build_description_html(
-                description=description,
-                bullets=bullets,
-            )
-
-            tags = build_collection_tags(
-                title=title,
-                bullets=bullets,
-                description=description,
-                brand=brand,
-                product_type=product_type,
-                marketplace=marketplace,
-                shopify_price_aed=price,
-                ai_tags=ai.get("tags", []),
-            )
-
-            tags.append(f"ASIN:{asin}")
-
-            if DRY_RUN:
-                dry_run_product_id = f"dry-run-{asin}"
-
-                metafields = build_product_metafields(
-                    product_id=dry_run_product_id,
-                    asin=asin,
-                    marketplace=marketplace,
-                    source_url=safe_text(
-                        db_product.get("source_url")
-                    ),
-                    landed_cost_aed=float(
-                        db_product.get(
-                            "landed_cost_aed", 0
-                        )
-                        or 0
-                    ),
-                    shopify_price_aed=price,
-                    brand=brand,
-                    seo_title=ai.get(
-                        "seo_title",
-                        title,
-                    ),
-                    meta_description=ai.get(
-                        "meta_description",
-                        "",
-                    ),
-                    product_type=ai.get(
-                        "product_type",
-                        "",
-                    ),
-                    collections=tags,
-                )
-
-                payload = {
-                    "asin": asin,
-                    "title": title,
-                    "description_html": description_html,
-                    "vendor": brand or "Soccica",
-                    "product_type": product_type,
-                    "tags": tags,
-                    "image_urls": images[:12],
-                    "price": price,
-                    "sku": asin,
-                    "metafields": metafields,
+            try:
+                counts = future.result()
+            except Exception as error:
+                counts = {
+                    "success": 0,
+                    "duplicate": 0,
+                    "error": 0,
+                    "dry_run": 0,
                 }
 
-                dry_run_file = write_dry_run_payload(
-                    asin,
-                    payload,
+                logger.error(
+                    "[Worker %d] beklenmeyen hata: %s",
+                    worker_id,
+                    error,
+                    exc_info=True,
                 )
 
-                print(
-                    "[DRY RUN] Shopify'a gönderilecek veri:"
-                )
-                print(
-                    json.dumps(
-                        payload,
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                )
-                print(
-                    "[DRY RUN] Kaydedildi:",
-                    dry_run_file,
-                )
-                print(
-                    "[DRY RUN] Durum değiştirilmedi "
-                    "(ready_for_shopify olarak kalıyor)."
-                )
+            success_count += counts["success"]
+            duplicate_count += counts["duplicate"]
+            error_count += counts["error"]
+            dry_run_count += counts["dry_run"]
 
-                dry_run_count += 1
-                continue
-
-            product = create_draft_product_with_price(
-                title=title,
-                description_html=description_html,
-                vendor=brand or "Soccica",
-                product_type=product_type,
-                tags=tags,
-                image_urls=images[:12],
-                price=price,
-                sku=asin,
+            print(
+                f"[Worker {worker_id}] tamamlandı. "
+                f"Yeni={counts['success']} "
+                f"Duplicate={counts['duplicate']} "
+                f"Hatalı={counts['error']} "
+                f"DryRun={counts['dry_run']}"
             )
-
-            variant = product.get("variant", {})
-
-            for tag in tags:
-                if not is_collection_worthy_tag(tag):
-                    continue
-
-                try:
-                    get_or_create_automated_collection(
-                        tag
-                    )
-                except Exception as error:
-                    logger.error(
-                        "%s koleksiyon oluşturma hatası "
-                        "(tag=%s): %s",
-                        asin,
-                        tag,
-                        error,
-                        exc_info=True,
-                    )
-
-            metafields = build_product_metafields(
-                product_id=product["id"],
-                asin=asin,
-                marketplace=marketplace,
-                source_url=safe_text(
-                    db_product.get("source_url")
-                ),
-                landed_cost_aed=float(
-                    db_product.get("landed_cost_aed", 0) or 0
-                ),
-                shopify_price_aed=price,
-                brand=brand,
-                seo_title=ai.get(
-                    "seo_title",
-                    title,
-                ),
-                meta_description=ai.get(
-                    "meta_description",
-                    "",
-                ),
-                product_type=ai.get(
-                    "product_type",
-                    "",
-                ),
-                collections=tags,
-            )
-
-            set_product_metafields(
-                metafields
-            )
-
-            mark_published(
-                asin=asin,
-                product_id=product["id"],
-                variant_id=safe_text(
-                    variant.get("id")
-                ),
-                handle=product["handle"],
-            )
-
-            append_csv_row(
-                PUBLISHED_FILE,
-                {
-                    "asin": asin,
-                    "shopify_product_id": product["id"],
-                    "shopify_variant_id":
-                        variant.get("id", ""),
-                    "title": product["title"],
-                    "handle": product["handle"],
-                    "status": product["status"],
-                    "price_aed":
-                        variant.get("price", price),
-                    "source_marketplace": marketplace,
-                    "duplicate_found": False,
-                },
-            )
-
-            print("Shopify DRAFT oluşturuldu.")
-            print("Başlık:", product["title"])
-            print("Fiyat:", price, "AED")
-
-            success_count += 1
-
-        except Exception as error:
-            error_text = str(error)
-
-            save_publish_error(
-                asin,
-                error_text,
-            )
-
-            append_csv_row(
-                ERROR_FILE,
-                {
-                    "asin": asin,
-                    "title": title,
-                    "error": error_text,
-                },
-            )
-
-            print("Shopify hatası:", error_text)
-
-            logger.error(
-                "%s Shopify hatası: %s",
-                asin,
-                error_text,
-                exc_info=True,
-            )
-
-            error_count += 1
 
     print("\n" + "=" * 70)
     print("SHOPIFY PARTİSİ TAMAMLANDI")
@@ -649,7 +819,7 @@ def main() -> None:
     print("Duplicate bulunan:", duplicate_count)
     print("Hatalı:", error_count)
 
-    if DRY_RUN:
+    if is_dry_run():
         print(
             "Dry-run (gerçek gönderim yapılmadı):",
             dry_run_count,
